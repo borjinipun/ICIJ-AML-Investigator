@@ -1,0 +1,17 @@
+[project]
+name = "icij-aml-investigator"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.135.3",
+    "gradio>=6.12.0",
+    "groq>=1.1.2",
+    "kuzu>=0.11.3",
+    "networkx>=3.4.2",
+    "pandas>=2.3.3",
+    "python-dotenv>=1.2.2",
+    "pyvis>=0.3.2",
+    "uvicorn>=0.44.0",
+]

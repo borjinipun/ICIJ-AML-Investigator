@@ -1,0 +1,9 @@
+gradio
+groq
+pandas
+kuzu
+python-dotenv
+fastapi
+uvicorn
+pyvis
+networkx
