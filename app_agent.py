@@ -4,10 +4,12 @@ import kuzu
 import os
 from groq import Groq
 from dotenv import load_dotenv
-
+from google import genai
 from pyvis.network import Network
 import networkx as nx
 import uuid
+import re
+
 
 # -------------------------
 # GRAPH BUILDER
@@ -174,19 +176,24 @@ def clean_query(query):
 # -------------------------
 def plan_investigation(question):
     prompt = f"""
-    You are a financial investigator.
-Break into investigation steps.
+You are a financial investigator.
+
+Break the investigation into EXACTLY 4 steps.
+
+Rules:
+- One step per line
+- No numbering
+- No explanation
+- Each step must be actionable for Cypher query
+
+Example:
+Find entities matching criteria
+Find related officers
+Find intermediaries involved
+Detect suspicious patterns
 
 Question:
 {question}
-
-Return steps like:
-1. Identify entities
-2. Find relsationships
-3. Detect supicious patterns
-4. Summarize
-
-Be concise.
 """
     return call_llm(prompt)
 
@@ -221,13 +228,22 @@ Return only query.
 # SELF-HEALING EXECUTOR
 # -------------------------
 def execute_with_repair(query):
+    if not query or "match" not in query.lower():
+        return query, pd.DataFrame()
+
     for _ in range(3):
         try:
             df = conn.execute(query).get_as_df()
             return query, df
         except Exception as e:
             fix_prompt = f"""
-Fix this Kùzu query.
+Fix this Kùzu Cypher query.
+
+STRICT RULES:
+- Must start with MATCH
+- Must use valid relationships
+- Must end with LIMIT 20
+- No explanation
 
 Error:
 {str(e)}
@@ -237,25 +253,38 @@ Query:
 
 Schema:
 {schema_context}
-
-Return only corrected query.
 """
             query = clean_query(call_llm(fix_prompt))
 
     return query, pd.DataFrame()
 
-
 # -------------------------
 # AGENT LOOP
 # -------------------------
+def clean_steps(plan):
+    steps = []
+    for line in plan.split("\n"):
+        line = line.strip()
+
+        # remove numbering like "1. ", "- ", etc.
+        line = re.sub(r"^\d+[\.\)]\s*", "", line)
+        line = re.sub(r"^-+\s*", "", line)
+
+        if len(line) > 5:
+            steps.append(line)
+
+    return steps
+
 def run_agent(question):
     plan = plan_investigation(question)
-    steps = [s for s in plan.split("\n") if s.strip()]
+    steps = clean_steps(plan)
 
     context = ""
     all_results = []
 
     for i, step in enumerate(steps):
+        if "summarize" in step.lower():
+            continue
         query = generate_step_query(step, context)
         query, df = execute_with_repair(query)
 
@@ -334,13 +363,169 @@ def investigate_agent(question):
 
 
 # -------------------------
-# GRADIO UI
+# Gradio UI
 # -------------------------
 with gr.Blocks(title="AML GenAI Investigator") as demo:
 
-    gr.Markdown("# 🕵️ AML GenAI Investigator (Agent Mode)")
-    gr.Markdown("Multi-step AI investigation with risk intelligence + graph visualization.")
+    # -------- Custom Styling --------
+    gr.HTML("""
+<style>
 
+/* 🌗 Auto Theme Support */
+@media (prefers-color-scheme: dark) {
+
+    body, .gradio-container {
+        background: #0f172a !important;
+        color: #e2e8f0 !important;
+    }
+
+    .title {
+        color: #f1f5f9 !important;
+    }
+
+    .subtitle {
+        color: #94a3b8 !important;
+    }
+
+    .card {
+        background: #1e293b !important;
+        border: 1px solid #334155 !important;
+        color: #e2e8f0 !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+
+    .card h3 {
+        color: #38bdf8 !important;
+    }
+
+    .card li {
+        color: #cbd5f5 !important;
+    }
+
+}
+
+/* ☀️ Light Theme (default) */
+@media (prefers-color-scheme: light) {
+
+    body, .gradio-container {
+        background: #f8fafc !important;
+        color: #0f172a !important;
+    }
+
+    .card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        color: #334155;
+    }
+
+}
+
+/* 🧱 Shared Styling */
+.gradio-container {
+    max-width: 1250px;
+    margin: auto;
+    padding: 20px;
+}
+
+.card {
+    border-radius: 14px;
+    padding: 18px;
+    height: 100%;
+    transition: all 0.2s ease;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+}
+
+</style>
+""")
+
+
+    # -------- Title --------
+    gr.HTML("""
+    <div style="text-align: center; font-family: sans-serif; padding: 10px;">
+        <h1 style="color: #2D3E50; margin-bottom: 5px;">🕵️ Anti Money Laundering GenAI Investigator</h1>
+        <h3 style="color: #5D6D7E; margin-top: 0;">Offshore Leaks Database</h3>
+        
+        <p style="font-size: 1.1em; max-width: 800px; margin: 20px auto; line-height: 1.5;">
+            Uncover the entities behind <b>810,000+</b> offshore companies, foundations, and trusts. 
+            Leverage AI-powered graph intelligence to generate Cypher queries and extract deep AML insights from ICIJ data.
+        </p>
+        
+        <div style="font-size: 0.85em; color: #85929E; border-top: 1px solid #EAECEE; padding-top: 10px;">
+            Citation: International Consortium of Investigative Journalists. <i>Offshore Leaks Database</i>. 
+            Retrieved April 14, 2026, from <a href="https://offshoreleaks.icij.org/" target="_blank" style="color: #3498DB;">offshoreleaks.icij.org</a>
+        </div>
+    </div>
+""")
+
+    # -------- 4 Column Layout --------
+    with gr.Row():
+
+        # Context + Data
+        with gr.Column():
+            gr.HTML("""
+            <div class="card">
+                <h3>🔍 Context & Data</h3>
+                <ul>
+                    <li>ICIJ Offshore Leaks dataset (Panama, Pandora Papers)</li>
+                    <li>Millions of records across jurisdictions</li>
+                    <li>Entities, Officers, Intermediaries, Addresses</li>
+                    <li>Highly connected financial ownership network</li>
+                    <li>Requires graph-based investigation</li>
+                </ul>
+            </div>
+            """)
+
+        # Problem
+        with gr.Column():
+            gr.HTML("""
+            <div class="card">
+                <h3>🚨 Problem</h3>
+                <ul>
+                    <li>Hidden beneficial ownership</li>
+                    <li>Cross-border financial structures</li>
+                    <li>Shell companies & proxy directors</li>
+                    <li>Layered transactions (multi-hop)</li>
+                    <li>Hard to detect using SQL/manual analysis</li>
+                </ul>
+            </div>
+            """)
+
+        # Solution
+        with gr.Column():
+            gr.HTML("""
+            <div class="card">
+                <h3>💡 Solution</h3>
+                <ul>
+                    <li>Graph DB (Kùzu) for relationship modeling</li>
+                    <li>GenAI → Natural language to Cypher</li>
+                    <li>Agentic investigation workflow</li>
+                    <li>Auto query → results → AML insights</li>
+                    <li>Explainable AI risk analysis</li>
+                </ul>
+            </div>
+            """)
+
+        # Detection Methods
+        with gr.Column():
+            gr.HTML("""
+            <div class="card">
+                <h3>🧩 Detection Methods & Sample Queries</h3>
+                <p style="font-size: 0.9em; color: #666;">Click a method to see what you can ask:</p>
+                <ul style="line-height: 1.8;">
+                    <li><b>Ownership Mismatch:</b> <i>"Which officers are linked to companies in a different country than their own?"</i></li>
+                    <li><b>Intermediary Hotspots:</b> <i>"Which intermediaries manage the most companies?"</i></li>
+                    <li><b>Address Clusters:</b> <i>"“Which addresses are used by many companies?”"</i></li>
+                    <li><b>Layered Ownership:</b> <i>"Which officers are connected through multiple layers of companies?"</i></li>
+                    <li><b>Suspicious Triangular Relationship:</b> <i>"Show officer–company–intermediary connections"</i></li>
+                </ul>
+            </div>
+            """)
+    # -------- Input Section --------
+    gr.Markdown("### ⚡ Run Investigation")
+    
     question = gr.Textbox(
         label="Investigation Query",
         placeholder="Find offshore entities with shared officers"
